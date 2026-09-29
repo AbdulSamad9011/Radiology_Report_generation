@@ -1,1 +1,60 @@
 .env
+# Byte-compiled / optimized / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment variables & secrets (CRITICAL)
+.env
+.env.*
+!.env.example
+secrets.json
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+conda-env/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# Datasets & Medical Imaging Data (BraTS, DICOM, NIfTI, etc.)
+data/
+datasets/
+raw_data/
+*.nii
+*.nii.gz
+*.dcm
+*.mha
+*.zip
+*.tar.gz
+
+# Model Checkpoints, Weights & Artifacts
+models/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.bin
+*.h5
+*.safetensors
+wandb/
+runs/
+
+# IDE / Editor configuration
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
