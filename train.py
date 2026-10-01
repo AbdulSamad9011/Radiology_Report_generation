@@ -39,14 +39,28 @@ def parse_args():
                     help="Train the CNN backbone from scratch. Avoids downloading ImageNet "
                          "weights but needs much more data/epochs to converge.")
     p.add_argument("--checkpoint_dir", default="checkpoints")
-    p.add_argument("--num_workers", type=int, default=2)
+    p.add_argument("--num_workers", type=int, default=0)
     p.add_argument("--min_word_freq", type=int, default=3)
+    p.add_argument("--dropout", type=float, default=0.2)
+    p.add_argument("--backbone_lr", type=float, default=5e-5)
+    p.add_argument("--weight_decay", type=float, default=1e-4)
+    p.add_argument("--patience", type=int, default=7)
     return p.parse_args()
+
+
+def get_device():
+    if torch.cuda.is_available():
+        try:
+            _ = (torch.zeros(1, device="cuda") + 1).cpu()
+            return torch.device("cuda")
+        except Exception:
+            return torch.device("cpu")
+    return torch.device("cpu")
 
 
 def main():
     args = parse_args()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     print(f"Using device: {device}")
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
@@ -74,13 +88,21 @@ def main():
     model = ReportGenerator(
         vocab_size=len(vocab), d_model=args.d_model, backbone=args.backbone,
         pretrained=not args.no_pretrained, nhead=args.nhead, num_layers=args.num_layers,
-        max_len=args.max_len, pad_idx=vocab.word2idx[PAD_TOKEN],
+        dropout=args.dropout, max_len=args.max_len, pad_idx=vocab.word2idx[PAD_TOKEN],
     ).to(device)
 
-    criterion = torch.nn.CrossEntropyLoss(ignore_index=vocab.word2idx[PAD_TOKEN])
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    criterion = torch.nn.CrossEntropyLoss(ignore_index=vocab.word2idx[PAD_TOKEN], label_smoothing=0.1)
+    
+    # Differential LR: fine-tune pretrained backbone with lower lr
+    optimizer = torch.optim.AdamW([
+        {"params": model.encoder.backbone.parameters(), "lr": args.backbone_lr, "weight_decay": args.weight_decay},
+        {"params": model.encoder.project.parameters(), "lr": args.lr, "weight_decay": args.weight_decay},
+        {"params": model.decoder.parameters(), "lr": args.lr, "weight_decay": args.weight_decay},
+    ])
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
 
     best_val_loss = float("inf")
+    epochs_no_improve = 0
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -110,11 +132,13 @@ def main():
                 loss = criterion(logits.reshape(-1, logits.size(-1)), target_ids.reshape(-1))
                 val_loss += loss.item() * images.size(0)
         val_loss /= len(val_ds)
+        scheduler.step(val_loss)
 
         print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            epochs_no_improve = 0
             ckpt_path = os.path.join(args.checkpoint_dir, "best_model.pt")
             torch.save({
                 "model_state_dict": model.state_dict(),
@@ -122,6 +146,11 @@ def main():
                 "args": vars(args),
             }, ckpt_path)
             print(f"  -> New best model saved (val_loss={val_loss:.4f})")
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= args.patience:
+                print(f"Early stopping triggered at epoch {epoch} (no val improvement for {args.patience} epochs).")
+                break
 
     print(f"Training complete. Best val loss: {best_val_loss:.4f}")
 

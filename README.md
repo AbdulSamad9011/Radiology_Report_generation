@@ -1,167 +1,177 @@
-# Radiology Report Generation (Vision-Language)
+# Radiology Report Generation
 
-A from-scratch vision-language model: given one or two chest X-ray views
-(frontal + lateral), it generates a free-text findings report. This is the
-"AI looks at an image and writes a report" family of problems — a step up
-from classification/segmentation into multimodal generation.
+A vision-language model that generates free-text radiology findings from chest X-ray images. Given a frontal (and optionally lateral) view, the model produces a draft Findings section describing what it observes — cardiac size, lung fields, pleural space, bony structures, and so on.
 
-## Why this project
+Built with PyTorch from scratch. Served with Streamlit.
 
-- **Two skill trees at once.** A CNN vision encoder plus a Transformer
-  language decoder, trained jointly — this is the core recipe behind every
-  modern vision-language model, just at a scale you can actually train and
-  understand end to end.
-- **Different eval methodology than a classifier.** You're scored with
-  NLG metrics (BLEU, ROUGE-L) instead of accuracy/Dice, which is worth
-  understanding if you want multimodal roles.
-- **A demo that reads, not just labels.** "Upload an X-ray, get a draft
-  report back" is a much stronger interview story than a bar chart of
-  class probabilities.
-- **No gated/credentialed data required.** Built around the IU X-Ray
-  dataset (public, no PhysioNet-style credentialing, unlike MIMIC-CXR).
+---
+
+## Demo
+
+Upload a chest X-ray and click **Generate Findings Report**:
+
+![Sample chest X-ray](images/sample_xray.jpeg)
+
+---
 
 ## Architecture
 
 ```
-Frontal + lateral X-ray
-        │
-        ▼
-  CNNEncoder (ResNet, ImageNet-pretrained)
-        │  spatial feature maps, projected to d_model,
-        │  flattened into a sequence of "memory" tokens
-        ▼
-  ReportDecoder (Transformer decoder, cross-attends to memory)
-        │  autoregressive, causal self-attention + cross-attention
-        ▼
-   Generated findings text
+Frontal X-ray  ──┐
+                 ├──► ResNet-50 Encoder
+Lateral X-ray  ──┘         │
+                    Spatial feature map (7×7×2048)
+                    Projected → 256-d, flattened to sequence
+                            │
+                            ▼
+                  Transformer Decoder
+                  4 layers · 8 attention heads · d_model=256
+                  Cross-attends to image memory at each step
+                            │
+                            ▼
+                   Generated findings text
 ```
 
+The encoder extracts spatial features from each X-ray view. These are projected and concatenated into a single memory sequence. The Transformer decoder attends to this memory autoregressively, generating one token at a time until it produces an `<end>` token.
+
+Multi-view input is handled by concatenating the feature sequences from each view — studies with only one image automatically duplicate the single view to keep the input shape consistent.
+
+---
+
+## Project structure
+
 ```
-radreport/
-├── vocab.py       # word-level vocabulary built from your training reports
-├── dataset.py      # IU X-Ray style dataset loader (frontal+lateral pairs)
-├── model.py         # CNNEncoder + ReportDecoder + ReportGenerator wrapper
-├── train.py           # training loop (teacher forcing, cross-entropy)
-├── generate.py          # greedy decoding + BLEU / ROUGE-L evaluation
-├── app.py                 # Streamlit demo
-└── requirements.txt
+.
+├── app.py               # Streamlit web interface
+├── model.py             # CNNEncoder + ReportDecoder + ReportGenerator
+├── dataset.py           # IU X-Ray dataset loader
+├── vocab.py             # Word-level vocabulary builder / encoder / decoder
+├── train.py             # Training loop (teacher forcing, cross-entropy)
+├── generate.py          # Greedy decoding + BLEU / ROUGE-L evaluation
+├── checkpoints/
+│   └── best_model.pt    # Best checkpoint saved by validation loss
+├── images/
+│   └── sample_xray.jpeg
+├── vocab.json           # Auto-generated during training
+├── requirements.txt
+├── run_app.sh           # One-command launcher
+└── .streamlit/
+    └── config.toml
 ```
 
-Every module has been smoke-tested here (forward-pass shape checks, a real
-multi-epoch training run on synthetic data, checkpoint save/load, greedy
-generation terminating correctly, and the Streamlit app booting) — you're
-starting from code that runs, not a sketch.
+---
 
-## 1. Setup
+## Setup
 
 ```bash
-python -m venv venv && source venv/bin/activate   # optional but recommended
+git clone https://github.com/your-username/Radiology_Report_generation.git
+cd Radiology_Report_generation
+
+python3 -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## 2. Get the dataset
+---
 
-This targets the **IU Chest X-Ray** collection (Indiana University /
-Open-i), preprocessed into the annotation format popularized by the R2Gen
-paper (Chen et al., *"Generating Radiology Reports via Memory-driven
-Transformer"*, EMNLP 2020):
+## Dataset
+
+Trained on the **IU Chest X-Ray** (Indiana University / Open-i) collection, using the preprocessed annotation format from the [R2Gen paper](https://arxiv.org/abs/2010.16056) (Chen et al., EMNLP 2020).
+
+The annotation file structure:
 
 ```json
 {
   "train": [
-    {"id": "CXR1000_IM-0003",
-     "report": "the heart is normal in size...",
-     "image_path": ["CXR1000_IM-0003-1001.png", "CXR1000_IM-0003-2001.png"]},
-    ...
+    {
+      "id": "CXR1000_IM-0003",
+      "report": "the heart is normal in size. the lungs are clear.",
+      "image_path": ["CXR1000_IM-0003-1001.png", "CXR1000_IM-0003-2001.png"]
+    }
   ],
   "val": [...],
   "test": [...]
 }
 ```
 
-Search for **"IU X-Ray R2Gen annotation.json"** — this preprocessed
-split (images + annotation.json) is widely mirrored alongside several
-open-source report-generation repos on GitHub, since it's the standard
-benchmark split for this task. Put the images in one folder and point
-`--image_dir` at it, and pass the annotation file as `--annotation_path`.
+This preprocessed split (`annotation.json` + images) is mirrored alongside several open-source report-generation repositories since it's the standard benchmark. Place images in a folder and pass its path to `--image_dir`.
 
-If you instead start from the *raw* Open-i XML reports, you'll need to pull
-the `FINDINGS`/`IMPRESSION` text and the paired image filenames out of each
-XML file yourself — the exact tag names vary slightly between raw download
-batches, so inspect one sample file before writing that parser.
+---
 
-## 3. Train
+## Training
 
 ```bash
-python train.py --annotation_path annotation.json --image_dir images/ \
-    --epochs 40 --batch_size 8 --backbone resnet50
+python train.py \
+    --annotation_path annotation.json \
+    --image_dir path/to/images/ \
+    --epochs 40 \
+    --batch_size 8 \
+    --backbone resnet50
 ```
 
-First run builds a word-level vocabulary from the **training split only**
-(saved to `vocab.json`) and trains with teacher forcing + cross-entropy.
-Best checkpoint (by validation loss) is saved to `checkpoints/best_model.pt`.
+On the first run, `vocab.json` is built from the training split and saved to the project root. The best checkpoint (lowest validation loss) is saved to `checkpoints/best_model.pt`.
 
-Notes:
-- The ResNet backbone downloads ImageNet-pretrained weights by default
-  (needs internet the first time). Pass `--no_pretrained` to train from
-  scratch instead — works, but expect slower convergence and weaker
-  results given how small IU X-Ray is (~3,300 studies).
-- `--max_images 2` assumes frontal+lateral; studies with only one image
-  are handled automatically (the view is duplicated).
-- Chest X-rays are **not** horizontally flipped during augmentation —
-  left/right laterality is clinically meaningful, unlike in most natural-
-  image pipelines.
+**Notes:**
+- The ResNet-50 backbone downloads ImageNet weights on first use — requires internet. Pass `--no_pretrained` to skip.
+- Horizontal flip augmentation is deliberately excluded — left/right orientation is clinically meaningful in chest X-rays.
+- Studies with only one view are handled automatically (the view is duplicated to match `--max_images`).
 
-## 4. Evaluate
+---
+
+## Evaluation
 
 ```bash
-python generate.py --annotation_path annotation.json --image_dir images/ \
-    --checkpoint checkpoints/best_model.pt --split test
+python generate.py \
+    --annotation_path annotation.json \
+    --image_dir path/to/images/ \
+    --checkpoint checkpoints/best_model.pt \
+    --split test
 ```
 
-Greedy-decodes reports for the split, prints a handful of side-by-side
-reference/generated examples, and reports **BLEU-1/BLEU-4** and
-**ROUGE-L**. Treat early-training BLEU-4 scores in the 0.05–0.15 range as
-normal for this task — published papers on this exact dataset report
-roughly this order of magnitude, since free-text generation is a much
-harder metric target than classification accuracy.
+Decodes the full test split and reports **BLEU-1, BLEU-4**, and **ROUGE-L** alongside a handful of reference vs. generated example pairs.
 
-## 5. Run the interactive demo
+Expected score range on IU X-Ray: BLEU-4 ~0.08–0.15, ROUGE-L ~0.30–0.38. Free-text generation is a significantly harder metric target than classification — published results on this dataset are in the same range.
+
+---
+
+## Running the app
+
+```bash
+bash run_app.sh
+```
+
+Or directly:
 
 ```bash
 streamlit run app.py
 ```
 
-Upload a frontal (and optionally lateral) X-ray and generate a draft
-report live.
+Open **http://localhost:8501**. Upload a frontal chest X-ray (JPEG or PNG), optionally add a lateral view, and click **Generate Findings Report**. A sample image is bundled if you want to test without your own data.
 
-## Extending it further (good "next steps" to mention in an interview)
+---
 
-- Add a **cross-entropy + reinforcement learning (CIDEr-optimized) fine-tuning
-  stage**, the approach several published report-generation papers use to
-  close the gap between teacher-forced training and free-running generation.
-- Swap greedy decoding for **beam search** in `generate.py`.
-- Add a **relational memory / knowledge-graph module** that conditions
-  generation on common findings co-occurrence patterns (the "R2Gen" idea).
-- Try a **frozen pretrained vision backbone (e.g. a CLIP-style image
-  encoder) + a small trainable decoder**, and compare sample-efficiency
-  against training the CNN from scratch.
-- Report **per-abnormality precision/recall** (e.g. via CheXpert's rule-
-  based labeler on the generated text) in addition to BLEU/ROUGE — clinical
-  correctness matters more than fluency for this task, and pointing that
-  out unprompted is a good signal in an interview.
+## Model configuration
 
-## Putting it on your resume / portfolio
+| Parameter | Default | Description |
+|---|---|---|
+| `backbone` | `resnet50` | Vision encoder. Also supports `resnet18`. |
+| `d_model` | `256` | Embedding dimension throughout encoder + decoder |
+| `nhead` | `8` | Transformer attention heads |
+| `num_layers` | `4` | Transformer decoder layers |
+| `max_len` | `100` | Maximum generated report length (tokens) |
+| `max_images` | `2` | Views per study (frontal + lateral) |
+| `image_size` | `224` | Input resolution after resize |
 
-> Built an encoder-decoder vision-language model (ResNet + Transformer
-> decoder) that generates chest X-ray findings reports from frontal/lateral
-> views, achieving X.XX BLEU-4 / X.XX ROUGE-L on held-out studies; shipped
-> as an interactive Streamlit demo.
+All hyperparameters are saved inside the checkpoint and restored automatically at inference time.
 
-Fill in your real numbers after training on the actual dataset.
+---
 
 ## Disclaimer
 
-This is a research/portfolio project, not a medical device. Generated
-reports are not validated for, and must not be used for, clinical
-decision-making.
+This project is for research purposes only. Generated reports have not been clinically validated and must not be used for diagnostic or treatment decisions.
+
+---
+
+## License
+
+MIT

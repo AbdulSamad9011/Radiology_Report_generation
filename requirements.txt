@@ -3,5 +3,6 @@ torchvision>=0.15
 numpy
 pillow
 tqdm
-streamlit
+streamlit>=1.32
 nltk
+rouge-score

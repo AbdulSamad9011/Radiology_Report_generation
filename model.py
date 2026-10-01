@@ -22,7 +22,7 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
-from vocab import START_TOKEN, END_TOKEN
+from vocab import PAD_TOKEN, START_TOKEN, END_TOKEN, UNK_TOKEN
 
 
 class CNNEncoder(nn.Module):
@@ -115,34 +115,70 @@ class ReportDecoder(nn.Module):
 class ReportGenerator(nn.Module):
     def __init__(self, vocab_size: int, d_model: int = 256, backbone: str = "resnet50",
                  pretrained: bool = True, nhead: int = 8, num_layers: int = 4,
-                 max_len: int = 100, pad_idx: int = 0):
+                 dropout: float = 0.2, max_len: int = 100, pad_idx: int = 0):
         super().__init__()
         self.encoder = CNNEncoder(d_model=d_model, backbone=backbone, pretrained=pretrained)
         self.decoder = ReportDecoder(vocab_size, d_model=d_model, nhead=nhead,
-                                      num_layers=num_layers, max_len=max_len, pad_idx=pad_idx)
+                                      num_layers=num_layers, dropout=dropout,
+                                      max_len=max_len, pad_idx=pad_idx)
 
     def forward(self, images, tgt_ids):
         memory = self.encoder(images)
         return self.decoder(tgt_ids, memory)
 
-    @torch.no_grad()
-    def generate(self, images, vocab, max_len: int = 100, device="cpu"):
-        """Greedy decoding: generate a report token by token."""
+    @torch.inference_mode()
+    def generate(self, images, vocab, max_len: int = 100, repetition_penalty: float = 1.35,
+                 no_repeat_ngram: int = 3, min_len: int = 4, device="cpu"):
+        """Autoregressive report generation with repetition penalty & special token masking."""
         self.eval()
         memory = self.encoder(images.to(device))
         b = images.size(0)
-        start_idx = vocab.word2idx[START_TOKEN]
-        end_idx = vocab.word2idx[END_TOKEN]
+        start_idx = vocab.word2idx.get(START_TOKEN, 1)
+        end_idx = vocab.word2idx.get(END_TOKEN, 2)
+        pad_idx = vocab.word2idx.get(PAD_TOKEN, 0)
+        unk_idx = vocab.word2idx.get(UNK_TOKEN, 3)
 
         generated = torch.full((b, 1), start_idx, dtype=torch.long, device=device)
         finished = torch.zeros(b, dtype=torch.bool, device=device)
 
-        for _ in range(max_len - 1):
-            logits = self.decoder(generated, memory)
-            next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+        for step in range(max_len - 1):
+            logits = self.decoder(generated, memory)[:, -1, :].clone()
+
+            # Prevent generation of special and unk tokens
+            logits[:, pad_idx] = -float("inf")
+            logits[:, start_idx] = -float("inf")
+            logits[:, unk_idx] = -float("inf")
+
+            if step < min_len:
+                logits[:, end_idx] = -float("inf")
+
+            # Trigram / n-gram blocking: prevent loops
+            if no_repeat_ngram > 0 and generated.size(1) >= no_repeat_ngram:
+                for batch_idx in range(b):
+                    curr_tokens = generated[batch_idx].tolist()
+                    ngram_prefix = tuple(curr_tokens[-(no_repeat_ngram - 1):])
+                    for i in range(len(curr_tokens) - no_repeat_ngram + 1):
+                        if tuple(curr_tokens[i:i + no_repeat_ngram - 1]) == ngram_prefix:
+                            banned = curr_tokens[i + no_repeat_ngram - 1]
+                            if banned not in (pad_idx, start_idx, end_idx):
+                                logits[batch_idx, banned] = -float("inf")
+
+            # Apply repetition penalty
+            if repetition_penalty != 1.0:
+                for batch_idx in range(b):
+                    for token_id in set(generated[batch_idx].tolist()):
+                        if token_id in (pad_idx, start_idx, end_idx):
+                            continue
+                        if logits[batch_idx, token_id] > 0:
+                            logits[batch_idx, token_id] /= repetition_penalty
+                        else:
+                            logits[batch_idx, token_id] *= repetition_penalty
+
+            next_token = logits.argmax(dim=-1, keepdim=True)
             generated = torch.cat([generated, next_token], dim=1)
             finished |= next_token.squeeze(1) == end_idx
             if finished.all():
                 break
 
         return generated
+

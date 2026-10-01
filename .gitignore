@@ -1,60 +1,150 @@
-.env
-# Byte-compiled / optimized / cache files
+# ==============================================================================
+# Byte-compiled / Optimized / Cache files
+# ==============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Environment variables & secrets (CRITICAL)
+# ==============================================================================
+# Environment Variables & Secrets
+# ==============================================================================
 .env
 .env.*
 !.env.example
 secrets.json
+*.pem
+*.key
 
+# ==============================================================================
 # Virtual Environments
+# ==============================================================================
 venv/
 .venv/
 env/
 ENV/
+env.bak/
+venv.bak/
 conda-env/
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-*-checkpoint.ipynb
-
-# Datasets & Medical Imaging Data (BraTS, DICOM, NIfTI, etc.)
+# ==============================================================================
+# Datasets, Annotations & Medical Imaging Data
+# ==============================================================================
 data/
 datasets/
 raw_data/
+images/
+*.dcm
 *.nii
 *.nii.gz
-*.dcm
 *.mha
+*.png
+*.jpg
+*.jpeg
+annotation.json
+*.csv
+*.tsv
 *.zip
+*.tar
 *.tar.gz
+*.rar
+*.7z
 
-# Model Checkpoints, Weights & Artifacts
-models/
+# ==============================================================================
+# Model Weights, Checkpoints & Artifacts
+# ==============================================================================
 checkpoints/
+models/
+saved_models/
 *.pt
 *.pth
-*.onnx
+*.pwf
 *.bin
-*.h5
+*.onnx
 *.safetensors
+*.ckpt
+*.h5
+*.tflite
+vocab.json
+radiology_model_artifacts.zip
+
+# ==============================================================================
+# Experiment Tracking & Logs
+# ==============================================================================
 wandb/
 runs/
+mlruns/
+lightning_logs/
+logs/
+*.log
+events.out.tfevents.*
 
-# IDE / Editor configuration
-.vscode/*
+# ==============================================================================
+# Streamlit Configuration & Local Cache
+# ==============================================================================
+.streamlit/credentials.toml
+.streamlit/secrets.toml
+
+# ==============================================================================
+# Jupyter Notebook Checkpoints
+# ==============================================================================
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+*.nbconvert.ipynb
+
+# ==============================================================================
+# Testing & Code Coverage
+# ==============================================================================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+nosetests.xml
+
+# ==============================================================================
+# IDEs, Editors & Tooling
+# ==============================================================================
+.vscode/
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
 .idea/
+*.sublime-workspace
+*.sublime-project
 *.swp
 *.swo
+*~
 
-# OS Generated Files
+# ==============================================================================
+# Operating System Files
+# ==============================================================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini

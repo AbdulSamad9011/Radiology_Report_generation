@@ -55,9 +55,19 @@ def parse_args():
     return p.parse_args()
 
 
+def get_device():
+    if torch.cuda.is_available():
+        try:
+            _ = (torch.zeros(1, device="cuda") + 1).cpu()
+            return torch.device("cuda")
+        except Exception:
+            return torch.device("cpu")
+    return torch.device("cpu")
+
+
 def main():
     args = parse_args()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
 
     vocab = Vocabulary().load(args.vocab_path)
     ckpt = torch.load(args.checkpoint, map_location=device)
@@ -78,6 +88,7 @@ def main():
         pretrained=False,  # weights are restored from the checkpoint below, not ImageNet
         nhead=ckpt_args.get("nhead", 8),
         num_layers=ckpt_args.get("num_layers", 4),
+        dropout=ckpt_args.get("dropout", 0.2),
         max_len=ckpt_args.get("max_len", 100),
         pad_idx=vocab.word2idx[PAD_TOKEN],
     ).to(device)
@@ -89,7 +100,10 @@ def main():
 
     for images, reports in loader:
         images = images.to(device)
-        generated_ids = model.generate(images, vocab, max_len=ckpt_args.get("max_len", 100), device=device)
+        generated_ids = model.generate(
+            images, vocab, max_len=ckpt_args.get("max_len", 100),
+            repetition_penalty=1.3, device=device
+        )
 
         for i in range(images.size(0)):
             hyp = vocab.decode(generated_ids[i].tolist())
